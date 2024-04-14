@@ -34,7 +34,7 @@ Install torch, torchvision, pillow, tqdm
 
 ```bash
 pip install torch torchvision pillow tqdm
-``
+```
 
 ## Citation
 
