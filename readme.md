@@ -1,4 +1,62 @@
 # Minimal Implementation of a D3PM (Structured Denoising Diffusion Models in Discrete State-Spaces), in pytorch
 
-Here is a minimal implementation of a D3PM (Structured Denoising Diffusion Models in Discrete State-Spaces) in pytorch. This is a simple implementation of the model, and is not optimized for performance. The code is based on the paper [Structured Denoising Diffusion Models in Discrete State-Spaces](https://arxiv.org/abs/2107.03006). I have tried to keep the code as simple as possible, so that it is easy to understand. As far as I know, this is the first, faithful reimplementation of D3PM in pytorch. (Please correct me if I am wrong)
 
+<p align="center">
+  <img src="contents/best.gif" alt="Chimp" width="400">
+  <img src="contents/best.png" alt="Chimp" width="400">
+</p>
+
+
+
+This is minimal (400 LOC), but fully faithful implementation of a D3PM (Structured Denoising Diffusion Models in Discrete State-Spaces) in pytorch. This is a simple implementation of the model, and is not optimized for performance. The code is based on the paper [Structured Denoising Diffusion Models in Discrete State-Spaces](https://arxiv.org/abs/2107.03006).
+
+I have tried to keep the code as simple as possible, so that it is easy to understand. As far as I know, this is the first, faithful reimplementation of D3PM in pytorch. (Please correct me if I am wrong). This implementation was heavily based on the [official implementation](https://github.com/google-research/google-research/tree/master/d3pm/images).
+
+Difference between this implementation and the official implementation:
+
+* This one has conditional sampling, so as you can see, generations are class-conditioned.
+* This one uses rather different/simple model architecture.
+* This one simplfies the official implementation very very much, so it is 400 LOC.
+* This one does not use truncated logistic reparameterization, but you can use that if you wish.
+
+## Usage
+
+Nothing to install. Just
+
+```bash
+python d3pm_runner.py
+```
+
+## Requirements
+
+Install torch, torchvision, pillow, tqdm
+
+```bash
+pip install torch torchvision pillow tqdm
+``
+
+## Citation
+
+This implementation:
+
+```bibtex
+@misc{d3pm_pytorch,
+  author={Simo Ryu},
+  title={Minimal Implementation of a D3PM (Structured Denoising Diffusion Models in Discrete State-Spaces), in pytorch},
+  year={2024},
+  howpublished={\url{https://github.com/cloneofsimo/d3pm}}
+}
+```
+
+Original Paper:
+
+```bibtex
+@article{austin2021structured,
+  title={Structured denoising diffusion models in discrete state-spaces},
+  author={Austin, Jacob and Johnson, Daniel D and Ho, Jonathan and Tarlow, Daniel and Van Den Berg, Rianne},
+  journal={Advances in Neural Information Processing Systems},
+  volume={34},
+  pages={17981--17993},
+  year={2021}
+}
+```
