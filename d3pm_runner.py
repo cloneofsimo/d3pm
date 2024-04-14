@@ -328,7 +328,7 @@ class D3PM(nn.Module):
 
 if __name__ == "__main__":
 
-    N = 4  # number of classes for discretized state per pixel
+    N = 2  # number of classes for discretized state per pixel
     d3pm = D3PM(DummyX0Model(1, N), 1000, num_classes=N, hybrid_loss_coeff=0.0).cuda()
     print(f"Total Param Count: {sum([p.numel() for p in d3pm.x0_model.parameters()])}")
     dataset = MNIST(
@@ -361,7 +361,7 @@ if __name__ == "__main__":
             cond = cond.to(device)
 
             # discritize x to N bins
-            x = (x * N).long().clamp(0, N - 1)
+            x = (x * (N - 1)).round().long().clamp(0, N - 1)
             loss, info = d3pm(x, cond)
 
             loss.backward()
@@ -384,8 +384,8 @@ if __name__ == "__main__":
                 d3pm.eval()
 
                 with torch.no_grad():
-                    cond = torch.arange(0, 16).cuda() % 10
-                    init_noise = torch.randint(0, N, (16, 1, 32, 32)).cuda()
+                    cond = torch.arange(0, 4).cuda() % 10
+                    init_noise = torch.randint(0, N, (4, 1, 32, 32)).cuda()
 
                     images = d3pm.sample_with_image_sequence(
                         init_noise, cond, stride=40
@@ -393,7 +393,7 @@ if __name__ == "__main__":
                     # image sequences to gif
                     gif = []
                     for image in images:
-                        x_as_image = make_grid(image.float() / N, nrow=4)
+                        x_as_image = make_grid(image.float() / (N-1), nrow=2)
                         img = x_as_image.permute(1, 2, 0).cpu().numpy()
                         img = (img * 255).astype(np.uint8)
                         gif.append(Image.fromarray(img))

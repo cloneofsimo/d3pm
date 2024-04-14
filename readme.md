@@ -1,9 +1,14 @@
+<p align="center">
+  <img src="contents/output.gif" alt="large" width="800">
+</p>
+
+
 # Minimal Implementation of a D3PM (Structured Denoising Diffusion Models in Discrete State-Spaces), in pytorch
 
 
 <p align="center">
-  <img src="contents/best.gif" alt="Chimp" width="400">
-  <img src="contents/best.png" alt="Chimp" width="400">
+  <img src="contents/best.gif" alt="small" width="400">
+  <img src="contents/best.png" alt="small" width="400">
 </p>
 
 
