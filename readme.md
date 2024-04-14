@@ -7,6 +7,8 @@
 </p>
 
 
+**Special thanks to [fal.ai](https://fal.ai/) for the compute resources for this project.**
+
 
 This is minimal (400 LOC), but fully faithful implementation of a D3PM [Structured Denoising Diffusion Models in Discrete State-Spaces](https://arxiv.org/abs/2107.03006). in pytorch.
 
