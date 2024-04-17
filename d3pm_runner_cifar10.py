@@ -4,7 +4,7 @@ import torch.nn as nn
 from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.datasets import MNIST
+from torchvision.datasets import CIFAR10
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
@@ -50,10 +50,30 @@ class DummyX0Model(nn.Module):
         self.up3 = blku(64, 32)
         self.up4 = blku(32, 16)
         self.convlast = blk(16, 16)
-        self.final = nn.Conv2d(16, N * n_channel, 1, bias=False)
+        self.final = nn.Conv2d(16, N * n_channel, 1, bias=True)
 
-        self.tr1 = nn.TransformerEncoderLayer(d_model=512, nhead=8)
-        self.tr2 = nn.TransformerEncoderLayer(d_model=512, nhead=8)
+        # init final layer
+        self.final.weight.data.zero_()
+        self.final.bias.data.zero_()
+
+        self.tr1 = nn.Sequential(
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+        )
+
+        self.tr2 = nn.Sequential(
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+        )
+        
         self.tr3 = nn.TransformerEncoderLayer(d_model=64, nhead=8)
 
         self.cond_embedding_1 = nn.Embedding(10, 16)
@@ -145,7 +165,12 @@ class D3PM(nn.Module):
 
         self.n_T = n_T
         self.hybrid_loss_coeff = hybrid_loss_coeff
-        self.beta_t = [1 / (self.n_T - t + 1) for t in range(1, self.n_T + 1)]
+
+        steps = torch.arange(n_T + 1, dtype=torch.float64) / n_T
+        alpha_bar = torch.cos((steps + 0.008) / 1.008 * torch.pi / 2)
+        self.beta_t = torch.minimum(1 - alpha_bar[1:] / alpha_bar[:-1], torch.ones_like(alpha_bar[1:]) * 0.999)
+        
+        #self.beta_t = [1 / (self.n_T - t + 1) for t in range(1, self.n_T + 1)]
         self.eps = 1e-6
         self.num_classses = num_classes
         q_onestep_mats = []
@@ -291,7 +316,7 @@ class D3PM(nn.Module):
         noise = torch.clip(noise, self.eps, 1.0)
 
         not_first_step = (t != 1).float().reshape((x.shape[0], *[1] * (x.dim())))
-
+    
         gumbel_noise = -torch.log(-torch.log(noise))
         sample = torch.argmax(
             pred_q_posterior_logits + gumbel_noise * not_first_step, dim=-1
@@ -328,23 +353,22 @@ class D3PM(nn.Module):
 
 if __name__ == "__main__":
 
-    N = 2  # number of classes for discretized state per pixel
-    d3pm = D3PM(DummyX0Model(1, N), 1000, num_classes=N, hybrid_loss_coeff=0.0).cuda()
+    N = 32  # number of classes for discretized state per pixel
+    d3pm = D3PM(DummyX0Model(3, N), 1000, num_classes=N, hybrid_loss_coeff=0.0).cuda()
     print(f"Total Param Count: {sum([p.numel() for p in d3pm.x0_model.parameters()])}")
-    dataset = MNIST(
+    dataset = CIFAR10(
         "./data",
         train=True,
         download=True,
         transform=transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.Pad(2),
             ]
         ),
     )
-    dataloader = DataLoader(dataset, batch_size=256, shuffle=True, num_workers=32)
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=True, num_workers=16)
 
-    optim = torch.optim.AdamW(d3pm.x0_model.parameters(), lr=1e-3)
+    optim = torch.optim.AdamW(d3pm.x0_model.parameters(), lr=1e-4)
     d3pm.train()
 
     n_epoch = 400
@@ -365,7 +389,7 @@ if __name__ == "__main__":
             loss, info = d3pm(x, cond)
 
             loss.backward()
-            norm = torch.nn.utils.clip_grad_norm_(d3pm.x0_model.parameters(), 0.1)
+            norm = torch.nn.utils.clip_grad_norm_(d3pm.x0_model.parameters(), 5.0)
 
             with torch.no_grad():
                 param_norm = sum([torch.norm(p) for p in d3pm.x0_model.parameters()])
@@ -380,12 +404,12 @@ if __name__ == "__main__":
             optim.step()
             global_step += 1
 
-            if global_step % 300 == 1:
+            if global_step % 600 == 1:
                 d3pm.eval()
 
                 with torch.no_grad():
                     cond = torch.arange(0, 4).cuda() % 10
-                    init_noise = torch.randint(0, N, (4, 1, 32, 32)).cuda()
+                    init_noise = torch.randint(0, N, (4, 3, 32, 32)).cuda()
 
                     images = d3pm.sample_with_image_sequence(
                         init_noise, cond, stride=40
