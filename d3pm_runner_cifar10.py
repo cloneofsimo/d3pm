@@ -8,26 +8,28 @@ from torchvision.datasets import CIFAR10
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
+import wandb
+
 blk = lambda ic, oc: nn.Sequential(
-    nn.Conv2d(ic, oc, 5, padding=2),
+    nn.Conv2d(ic, oc, 3, padding=1),
     nn.GroupNorm(oc // 8, oc),
     nn.LeakyReLU(),
-    nn.Conv2d(oc, oc, 5, padding=2),
+    nn.Conv2d(oc, oc, 3, padding=1),
     nn.GroupNorm(oc // 8, oc),
     nn.LeakyReLU(),
-    nn.Conv2d(oc, oc, 5, padding=2),
+    nn.Conv2d(oc, oc, 3, padding=1),
     nn.GroupNorm(oc // 8, oc),
     nn.LeakyReLU(),
 )
 
 blku = lambda ic, oc: nn.Sequential(
-    nn.Conv2d(ic, oc, 5, padding=2),
+    nn.Conv2d(ic, oc, 3, padding=1),
     nn.GroupNorm(oc // 8, oc),
     nn.LeakyReLU(),
-    nn.Conv2d(oc, oc, 5, padding=2),
+    nn.Conv2d(oc, oc, 3, padding=1),
     nn.GroupNorm(oc // 8, oc),
     nn.LeakyReLU(),
-    nn.Conv2d(oc, oc, 5, padding=2),
+    nn.Conv2d(oc, oc, 3, padding=1),
     nn.GroupNorm(oc // 8, oc),
     nn.LeakyReLU(),
     nn.ConvTranspose2d(oc, oc, 2, stride=2),
@@ -40,57 +42,61 @@ class DummyX0Model(nn.Module):
 
     def __init__(self, n_channel: int, N: int = 16) -> None:
         super(DummyX0Model, self).__init__()
+        Z = 256
         self.down1 = blk(n_channel, 16)
         self.down2 = blk(16, 32)
-        self.down3 = blk(32, 64)
-        self.down4 = blk(64, 512)
-        self.down5 = blk(512, 512)
-        self.up1 = blku(512, 512)
-        self.up2 = blku(512 + 512, 64)
-        self.up3 = blku(64, 32)
-        self.up4 = blku(32, 16)
-        self.convlast = blk(16, 16)
-        self.final = nn.Conv2d(16, N * n_channel, 1, bias=True)
+        self.down3 = blk(32, Z)
+        self.down4 = blk(Z, Z)
+        self.down5 = blk(Z, Z)
+        self.up1 = blku(Z, Z)
+        self.up2 = blku(Z + Z, Z)
+        self.up3 = blku(Z + Z, 32)
+        self.up4 = blku(32 + 32, 16)
+        self.convlast = blk(16 + 16, 16)
+        self.final = nn.Conv2d(16, N * n_channel * 2, 1, bias=True)
 
+        self.base_transitions = nn.Linear(N, N, bias = False)
+        # init as identity
+        self.base_transitions.weight.data.zero_()
+        for i in range(N):
+            self.base_transitions.weight.data[i, i] = 1.0
+   
         # init final layer
         self.final.weight.data.zero_()
         self.final.bias.data.zero_()
 
         self.tr1 = nn.Sequential(
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
+            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
+            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
         )
 
         self.tr2 = nn.Sequential(
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
-            nn.TransformerEncoderLayer(d_model=512, nhead=4),
+            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
+            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
+            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
         )
         
-        self.tr3 = nn.TransformerEncoderLayer(d_model=64, nhead=8)
+        self.tr3 = nn.TransformerEncoderLayer(d_model=Z, nhead=4)
 
         self.cond_embedding_1 = nn.Embedding(10, 16)
         self.cond_embedding_2 = nn.Embedding(10, 32)
-        self.cond_embedding_3 = nn.Embedding(10, 64)
-        self.cond_embedding_4 = nn.Embedding(10, 512)
-        self.cond_embedding_5 = nn.Embedding(10, 512)
-        self.cond_embedding_6 = nn.Embedding(10, 64)
+        self.cond_embedding_3 = nn.Embedding(10, Z)
+        self.cond_embedding_4 = nn.Embedding(10, Z)
+        self.cond_embedding_5 = nn.Embedding(10, Z)
+        self.cond_embedding_6 = nn.Embedding(10, Z)
 
         self.temb_1 = nn.Linear(32, 16)
         self.temb_2 = nn.Linear(32, 32)
-        self.temb_3 = nn.Linear(32, 64)
-        self.temb_4 = nn.Linear(32, 512)
+        self.temb_3 = nn.Linear(32, Z)
+        self.temb_4 = nn.Linear(32, Z)
+
+        self.temb_5 = nn.Linear(32, 32)
         self.N = N
 
     def forward(self, x, t, cond) -> torch.Tensor:
-        x = (2 * x.float() / self.N) - 1.0
+        x_onehot = torch.nn.functional.one_hot(x, self.N).float().to(x.device)
+        x = (2 * x.float() / (self.N - 1)) - 1.0
         t = t.float().reshape(-1, 1) / 1000
         t_features = [torch.sin(t * 3.1415 * 2**i) for i in range(16)] + [
             torch.cos(t * 3.1415 * 2**i) for i in range(16)
@@ -101,6 +107,7 @@ class DummyX0Model(nn.Module):
         t_emb_2 = self.temb_2(tx).unsqueeze(-1).unsqueeze(-1)
         t_emb_3 = self.temb_3(tx).unsqueeze(-1).unsqueeze(-1)
         t_emb_4 = self.temb_4(tx).unsqueeze(-1).unsqueeze(-1)
+        t_emb_5 = self.temb_5(tx).unsqueeze(-1).unsqueeze(-1)
 
         cond_emb_1 = self.cond_embedding_1(cond).unsqueeze(-1).unsqueeze(-1)
         cond_emb_2 = self.cond_embedding_2(cond).unsqueeze(-1).unsqueeze(-1)
@@ -136,19 +143,19 @@ class DummyX0Model(nn.Module):
             .transpose(1, 2)
             .reshape(y.shape)
         )
-        y = self.up3(y)
-        y = self.up4(y)
-        y = self.convlast(y)
+        y = self.up3(torch.cat([x3, y], dim=1))
+        y = self.up4(torch.cat([x2, y], dim=1))
+        y = self.convlast(torch.cat([x1, y], dim=1) + t_emb_5)
         y = self.final(y)
 
         # reshape to B, C, H, W, N
-        y = (
-            y.reshape(y.shape[0], -1, self.N, *x.shape[2:])
+        y, gate = (
+            y.reshape(y.shape[0], -1, self.N * 2, *x.shape[2:])
             .transpose(2, -1)
             .contiguous()
-        )
-
-        return y
+        ).chunk(2, dim=-1)
+        gate = torch.tanh(gate)
+        return y * (1 - gate) + x_onehot * (1 + gate)
 
 
 class D3PM(nn.Module):
@@ -252,6 +259,11 @@ class D3PM(nn.Module):
         return bc
 
     def vb(self, dist1, dist2):
+
+        # flatten dist1 and dist2
+        dist1 = dist1.flatten(start_dim=0, end_dim=-2)
+        dist2 = dist2.flatten(start_dim=0, end_dim=-2)
+
         out = torch.softmax(dist1 + self.eps, dim=-1) * (
             torch.log_softmax(dist1 + self.eps, dim=-1)
             - torch.log_softmax(dist2 + self.eps, dim=-1)
@@ -291,10 +303,13 @@ class D3PM(nn.Module):
         # we use hybrid loss.
 
         predicted_x0_logits = self.model_predict(x_t, t, cond)
+        #print("predicted_x0_logits", predicted_x0_logits[:3, :3, :3, :3, :3])
 
         # based on this, we first do vb loss.
         true_q_posterior_logits = self.q_posterior_logits(x, x_t, t)
         pred_q_posterior_logits = self.q_posterior_logits(predicted_x0_logits, x_t, t)
+        #print("true", true_q_posterior_logits[:3, :3, :3, :3, :3])
+        #print("pred", pred_q_posterior_logits[:3, :3, :3, :3, :3])
 
         vb_loss = self.vb(true_q_posterior_logits, pred_q_posterior_logits)
 
@@ -303,7 +318,7 @@ class D3PM(nn.Module):
 
         ce_loss = torch.nn.CrossEntropyLoss()(predicted_x0_logits, x)
 
-        return vb_loss * self.hybrid_loss_coeff + ce_loss, {
+        return self.hybrid_loss_coeff * vb_loss +  ce_loss, {
             "vb_loss": vb_loss.detach().item(),
             "ce_loss": ce_loss.detach().item(),
         }
@@ -350,28 +365,31 @@ class D3PM(nn.Module):
 
         return images
 
+from dit import DiT_Llama
 
 if __name__ == "__main__":
 
-    N = 32  # number of classes for discretized state per pixel
-    d3pm = D3PM(DummyX0Model(3, N), 1000, num_classes=N, hybrid_loss_coeff=0.0).cuda()
+    wandb.init(project="d3pm_cifar10")
+
+    N = 8  # number of classes for discretized state per pixel
+    d3pm = D3PM(DiT_Llama(3, N), 1000, num_classes=N, hybrid_loss_coeff=0.0).cuda()
     print(f"Total Param Count: {sum([p.numel() for p in d3pm.x0_model.parameters()])}")
     dataset = CIFAR10(
         "./data",
         train=True,
         download=True,
         transform=transforms.Compose(
-            [
+            [   
+                transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
             ]
         ),
     )
-    dataloader = DataLoader(dataset, batch_size=256, shuffle=True, num_workers=16)
-
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=16)
     optim = torch.optim.AdamW(d3pm.x0_model.parameters(), lr=1e-4)
     d3pm.train()
 
-    n_epoch = 400
+    n_epoch = 4000
     device = "cuda"
 
     global_step = 0
@@ -385,8 +403,8 @@ if __name__ == "__main__":
             cond = cond.to(device)
 
             # discritize x to N bins
-            x = (x * (N - 1)).round().long().clamp(0, N - 1)
-            loss, info = d3pm(x, cond)
+            x_cat = (x * (N - 1)).round().long().clamp(0, N - 1)
+            loss, info = d3pm(x_cat, cond)
 
             loss.backward()
             norm = torch.nn.utils.clip_grad_norm_(d3pm.x0_model.parameters(), 5.0)
@@ -398,6 +416,15 @@ if __name__ == "__main__":
                 loss_ema = loss.item()
             else:
                 loss_ema = 0.99 * loss_ema + 0.01 * loss.item()
+
+            if global_step % 10 == 0:
+                wandb.log(
+                    {
+                        "train_loss": loss,
+                        "train_grad_norm": norm,
+                        "train_param_norm": param_norm,
+                    }
+                )
             pbar.set_description(
                 f"loss: {loss_ema:.4f}, norm: {norm:.4f}, param_norm: {param_norm:.4f}, vb_loss: {info['vb_loss']:.4f}, ce_loss: {info['ce_loss']:.4f}"
             )
@@ -408,8 +435,8 @@ if __name__ == "__main__":
                 d3pm.eval()
 
                 with torch.no_grad():
-                    cond = torch.arange(0, 4).cuda() % 10
-                    init_noise = torch.randint(0, N, (4, 3, 32, 32)).cuda()
+                    cond = torch.arange(0, 16).cuda() % 10
+                    init_noise = torch.randint(0, N, (16, 3, 32, 32)).cuda()
 
                     images = d3pm.sample_with_image_sequence(
                         init_noise, cond, stride=40
@@ -417,7 +444,10 @@ if __name__ == "__main__":
                     # image sequences to gif
                     gif = []
                     for image in images:
-                        x_as_image = make_grid(image.float() / (N-1), nrow=2)
+                        x_from_dataloader = x_cat[:16].cpu() / (N-1)
+                        this_image = image.float().cpu() / (N-1)
+                        all_images = torch.cat([x_from_dataloader, this_image], dim=0)
+                        x_as_image = make_grid(all_images, nrow=4)
                         img = x_as_image.permute(1, 2, 0).cpu().numpy()
                         img = (img * 255).astype(np.uint8)
                         gif.append(Image.fromarray(img))
@@ -432,5 +462,12 @@ if __name__ == "__main__":
 
                     last_img = gif[-1]
                     last_img.save(f"contents/sample_{global_step}_last.png")
+
+                    # log images
+                    wandb.log(
+                        {
+                            "sample": wandb.Image(last_img),
+                        }
+                    )
 
                 d3pm.train()
