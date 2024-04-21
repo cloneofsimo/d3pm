@@ -1,5 +1,6 @@
 <p align="center">
   <img src="contents/output.gif" alt="large" width="400">
+  <img src="contents/cifar_best.gif" alt="large" width="200">
 </p>
 
 
@@ -29,10 +30,17 @@ Difference between this implementation and the official implementation:
 
 ## Usage
 
-Nothing to install. Just
+
+Following is completely self-contained example.
 
 ```bash
 python d3pm_runner.py
+```
+
+Following uses dit.py, for CIFAR-10 dataset.
+  
+```bash
+python d3pm_runner_cifar.py
 ```
 
 ## Requirements
