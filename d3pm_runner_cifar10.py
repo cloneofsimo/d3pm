@@ -10,153 +10,6 @@ from tqdm import tqdm
 
 import wandb
 
-blk = lambda ic, oc: nn.Sequential(
-    nn.Conv2d(ic, oc, 3, padding=1),
-    nn.GroupNorm(oc // 8, oc),
-    nn.LeakyReLU(),
-    nn.Conv2d(oc, oc, 3, padding=1),
-    nn.GroupNorm(oc // 8, oc),
-    nn.LeakyReLU(),
-    nn.Conv2d(oc, oc, 3, padding=1),
-    nn.GroupNorm(oc // 8, oc),
-    nn.LeakyReLU(),
-)
-
-blku = lambda ic, oc: nn.Sequential(
-    nn.Conv2d(ic, oc, 3, padding=1),
-    nn.GroupNorm(oc // 8, oc),
-    nn.LeakyReLU(),
-    nn.Conv2d(oc, oc, 3, padding=1),
-    nn.GroupNorm(oc // 8, oc),
-    nn.LeakyReLU(),
-    nn.Conv2d(oc, oc, 3, padding=1),
-    nn.GroupNorm(oc // 8, oc),
-    nn.LeakyReLU(),
-    nn.ConvTranspose2d(oc, oc, 2, stride=2),
-    nn.GroupNorm(oc // 8, oc),
-    nn.LeakyReLU(),
-)
-
-
-class DummyX0Model(nn.Module):
-
-    def __init__(self, n_channel: int, N: int = 16) -> None:
-        super(DummyX0Model, self).__init__()
-        Z = 256
-        self.down1 = blk(n_channel, 16)
-        self.down2 = blk(16, 32)
-        self.down3 = blk(32, Z)
-        self.down4 = blk(Z, Z)
-        self.down5 = blk(Z, Z)
-        self.up1 = blku(Z, Z)
-        self.up2 = blku(Z + Z, Z)
-        self.up3 = blku(Z + Z, 32)
-        self.up4 = blku(32 + 32, 16)
-        self.convlast = blk(16 + 16, 16)
-        self.final = nn.Conv2d(16, N * n_channel * 2, 1, bias=True)
-
-        self.base_transitions = nn.Linear(N, N, bias = False)
-        # init as identity
-        self.base_transitions.weight.data.zero_()
-        for i in range(N):
-            self.base_transitions.weight.data[i, i] = 1.0
-   
-        # init final layer
-        self.final.weight.data.zero_()
-        self.final.bias.data.zero_()
-
-        self.tr1 = nn.Sequential(
-            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
-            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
-            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
-        )
-
-        self.tr2 = nn.Sequential(
-            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
-            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
-            nn.TransformerEncoderLayer(d_model=Z, nhead=4, bias = False, dropout = 0.0, dim_feedforward=4 * Z),
-        )
-        
-        self.tr3 = nn.TransformerEncoderLayer(d_model=Z, nhead=4)
-
-        self.cond_embedding_1 = nn.Embedding(10, 16)
-        self.cond_embedding_2 = nn.Embedding(10, 32)
-        self.cond_embedding_3 = nn.Embedding(10, Z)
-        self.cond_embedding_4 = nn.Embedding(10, Z)
-        self.cond_embedding_5 = nn.Embedding(10, Z)
-        self.cond_embedding_6 = nn.Embedding(10, Z)
-
-        self.temb_1 = nn.Linear(32, 16)
-        self.temb_2 = nn.Linear(32, 32)
-        self.temb_3 = nn.Linear(32, Z)
-        self.temb_4 = nn.Linear(32, Z)
-
-        self.temb_5 = nn.Linear(32, 32)
-        self.N = N
-
-    def forward(self, x, t, cond) -> torch.Tensor:
-        x_onehot = torch.nn.functional.one_hot(x, self.N).float().to(x.device)
-        x = (2 * x.float() / (self.N - 1)) - 1.0
-        t = t.float().reshape(-1, 1) / 1000
-        t_features = [torch.sin(t * 3.1415 * 2**i) for i in range(16)] + [
-            torch.cos(t * 3.1415 * 2**i) for i in range(16)
-        ]
-        tx = torch.cat(t_features, dim=1).to(x.device)
-
-        t_emb_1 = self.temb_1(tx).unsqueeze(-1).unsqueeze(-1)
-        t_emb_2 = self.temb_2(tx).unsqueeze(-1).unsqueeze(-1)
-        t_emb_3 = self.temb_3(tx).unsqueeze(-1).unsqueeze(-1)
-        t_emb_4 = self.temb_4(tx).unsqueeze(-1).unsqueeze(-1)
-        t_emb_5 = self.temb_5(tx).unsqueeze(-1).unsqueeze(-1)
-
-        cond_emb_1 = self.cond_embedding_1(cond).unsqueeze(-1).unsqueeze(-1)
-        cond_emb_2 = self.cond_embedding_2(cond).unsqueeze(-1).unsqueeze(-1)
-        cond_emb_3 = self.cond_embedding_3(cond).unsqueeze(-1).unsqueeze(-1)
-        cond_emb_4 = self.cond_embedding_4(cond).unsqueeze(-1).unsqueeze(-1)
-        cond_emb_5 = self.cond_embedding_5(cond).unsqueeze(-1).unsqueeze(-1)
-        cond_emb_6 = self.cond_embedding_6(cond).unsqueeze(-1).unsqueeze(-1)
-
-        x1 = self.down1(x) + t_emb_1 + cond_emb_1
-        x2 = self.down2(nn.functional.avg_pool2d(x1, 2)) + t_emb_2 + cond_emb_2
-        x3 = self.down3(nn.functional.avg_pool2d(x2, 2)) + t_emb_3 + cond_emb_3
-        x4 = self.down4(nn.functional.avg_pool2d(x3, 2)) + t_emb_4 + cond_emb_4
-        x5 = self.down5(nn.functional.avg_pool2d(x4, 2))
-
-        x5 = (
-            self.tr1(x5.reshape(x5.shape[0], x5.shape[1], -1).transpose(1, 2))
-            .transpose(1, 2)
-            .reshape(x5.shape)
-        )
-
-        y = self.up1(x5) + cond_emb_5
-
-        y = (
-            self.tr2(y.reshape(y.shape[0], y.shape[1], -1).transpose(1, 2))
-            .transpose(1, 2)
-            .reshape(y.shape)
-        )
-
-        y = self.up2(torch.cat([x4, y], dim=1)) + cond_emb_6
-
-        y = (
-            self.tr3(y.reshape(y.shape[0], y.shape[1], -1).transpose(1, 2))
-            .transpose(1, 2)
-            .reshape(y.shape)
-        )
-        y = self.up3(torch.cat([x3, y], dim=1))
-        y = self.up4(torch.cat([x2, y], dim=1))
-        y = self.convlast(torch.cat([x1, y], dim=1) + t_emb_5)
-        y = self.final(y)
-
-        # reshape to B, C, H, W, N
-        y, gate = (
-            y.reshape(y.shape[0], -1, self.N * 2, *x.shape[2:])
-            .transpose(2, -1)
-            .contiguous()
-        ).chunk(2, dim=-1)
-        gate = torch.tanh(gate)
-        return y * (1 - gate) + x_onehot * (1 + gate)
-
 
 class D3PM(nn.Module):
     def __init__(
@@ -282,7 +135,6 @@ class D3PM(nn.Module):
         # so they are in form of x_0's logit might be independent to model choice.
         # for example, you can convert 2 * N channel output of model output to logit via get_logits_from_logistic_pars
         # they introduce at appendix A.8.
-
         predicted_x0_logits = self.x0_model(x_0, t, cond)
 
         return predicted_x0_logits
@@ -303,13 +155,10 @@ class D3PM(nn.Module):
         # we use hybrid loss.
 
         predicted_x0_logits = self.model_predict(x_t, t, cond)
-        #print("predicted_x0_logits", predicted_x0_logits[:3, :3, :3, :3, :3])
 
         # based on this, we first do vb loss.
         true_q_posterior_logits = self.q_posterior_logits(x, x_t, t)
         pred_q_posterior_logits = self.q_posterior_logits(predicted_x0_logits, x_t, t)
-        #print("true", true_q_posterior_logits[:3, :3, :3, :3, :3])
-        #print("pred", pred_q_posterior_logits[:3, :3, :3, :3, :3])
 
         vb_loss = self.vb(true_q_posterior_logits, pred_q_posterior_logits)
 
@@ -372,7 +221,7 @@ if __name__ == "__main__":
     wandb.init(project="d3pm_cifar10")
 
     N = 8  # number of classes for discretized state per pixel
-    d3pm = D3PM(DiT_Llama(3, N), 1000, num_classes=N, hybrid_loss_coeff=0.0).cuda()
+    d3pm = D3PM(DiT_Llama(3, N, dim = 1024), 1000, num_classes=N, hybrid_loss_coeff=0.0).cuda()
     print(f"Total Param Count: {sum([p.numel() for p in d3pm.x0_model.parameters()])}")
     dataset = CIFAR10(
         "./data",
@@ -386,7 +235,7 @@ if __name__ == "__main__":
         ),
     )
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=16)
-    optim = torch.optim.AdamW(d3pm.x0_model.parameters(), lr=1e-4)
+    optim = torch.optim.AdamW(d3pm.x0_model.parameters(), lr=2e-5)
     d3pm.train()
 
     n_epoch = 4000

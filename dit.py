@@ -195,7 +195,7 @@ class FinalLayer(nn.Module):
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(), nn.Linear(min(hidden_size, 1024), 2 * hidden_size, bias=True),
         )
-        # init zero
+        # # init zero
         nn.init.constant_(self.linear.weight, 0)
         nn.init.constant_(self.linear.bias, 0)
 
@@ -214,8 +214,8 @@ class DiT_Llama(nn.Module):
         input_size=32,
         patch_size=2,
         dim=512,
-        n_layers=10,
-        n_heads=8,
+        n_layers=5,
+        n_heads=16,
         multiple_of=256,
         ffn_dim_multiplier=None,
         norm_eps=1e-5,
@@ -227,11 +227,20 @@ class DiT_Llama(nn.Module):
         self.N = N
         self.learn_sigma = learn_sigma
         self.in_channels = in_channels
-        self.out_channels = 2 * N
+        self.out_channels = N * in_channels * 2
         self.input_size = input_size
         self.patch_size = patch_size
 
-        self.x_embedder = nn.Linear(patch_size * patch_size * in_channels, dim, bias=True)
+        self.init_conv_seq = nn.Sequential(
+            nn.Conv2d(in_channels, dim//2, kernel_size=5, padding=2, stride=1),
+            nn.SiLU(),
+            nn.GroupNorm(32, dim//2),
+            nn.Conv2d(dim//2, dim//2, kernel_size=5, padding = 2, stride=1),
+            nn.SiLU(),
+            nn.GroupNorm(32, dim//2)
+        )
+
+        self.x_embedder = nn.Linear(patch_size * patch_size * dim//2, dim, bias=True)
         nn.init.constant_(self.x_embedder.bias, 0)
 
         self.t_embedder = TimestepEmbedder(min(dim, 1024))
@@ -268,7 +277,8 @@ class DiT_Llama(nn.Module):
         self.freqs_cis = self.freqs_cis.to(x.device)
 
         x_onehot = torch.nn.functional.one_hot(x, self.N).float().to(x.device)
-        x = (2 * x.float() / self.N) - 1.0
+        x = (2 * x.float() / (self.N - 1)) - 1.0
+        x = self.init_conv_seq(x)
 
         x = self.patchify(x)
         x = self.x_embedder(x)
@@ -287,8 +297,14 @@ class DiT_Llama(nn.Module):
             .transpose(2, -1)
             .contiguous()
         ).chunk(2, dim=-1)
-        gate = torch.tanh(gate)
-        return x * (1 - gate) + x_onehot * (1 + gate)
+     
+        return x + x_onehot * (1 + gate).abs()
+
+        # x = (x.reshape(x.shape[0], -1, self.N, *x.shape[2:])
+        #     .transpose(2, -1)
+        #     .contiguous()
+        # )
+        # return x
 
     def forward_with_cfg(self, x, t, y, cfg_scale):
         half = x[: len(x) // 2]
