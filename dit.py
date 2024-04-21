@@ -29,7 +29,9 @@ class TimestepEmbedder(nn.Module):
         args = t[:, None] * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
-            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+            embedding = torch.cat(
+                [embedding, torch.zeros_like(embedding[:, :1])], dim=-1
+            )
         return embedding
 
     def forward(self, t):
@@ -42,7 +44,9 @@ class LabelEmbedder(nn.Module):
     def __init__(self, num_classes, hidden_size, dropout_prob):
         super().__init__()
         use_cfg_embedding = int(dropout_prob > 0)
-        self.embedding_table = nn.Embedding(num_classes + use_cfg_embedding, hidden_size)
+        self.embedding_table = nn.Embedding(
+            num_classes + use_cfg_embedding, hidden_size
+        )
         self.num_classes = num_classes
         self.dropout_prob = dropout_prob
 
@@ -80,7 +84,6 @@ class Attention(nn.Module):
         self.q_norm = nn.LayerNorm(self.n_heads * self.head_dim)
         self.k_norm = nn.LayerNorm(self.n_heads * self.head_dim)
 
-
     @staticmethod
     def reshape_for_broadcast(freqs_cis, x):
         ndim = x.ndim
@@ -117,7 +120,7 @@ class Attention(nn.Module):
             xq.permute(0, 2, 1, 3),
             xk.permute(0, 2, 1, 3),
             xv.permute(0, 2, 1, 3),
-            dropout_p=0.,
+            dropout_p=0.0,
             is_causal=False,
         ).permute(0, 2, 1, 3)
         output = output.flatten(-2)
@@ -159,21 +162,25 @@ class TransformerBlock(nn.Module):
         self.head_dim = dim // n_heads
         self.attention = Attention(dim, n_heads)
         self.feed_forward = FeedForward(
-            dim=dim, hidden_dim=4 * dim, multiple_of=multiple_of, ffn_dim_multiplier=ffn_dim_multiplier,
+            dim=dim,
+            hidden_dim=4 * dim,
+            multiple_of=multiple_of,
+            ffn_dim_multiplier=ffn_dim_multiplier,
         )
         self.layer_id = layer_id
         self.attention_norm = nn.LayerNorm(dim, eps=norm_eps)
         self.ffn_norm = nn.LayerNorm(dim, eps=norm_eps)
 
         self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(min(dim, 1024), 6 * dim, bias=True),
+            nn.SiLU(),
+            nn.Linear(min(dim, 1024), 6 * dim, bias=True),
         )
 
     def forward(self, x, freqs_cis, adaln_input=None):
         if adaln_input is not None:
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(
-                adaln_input
-            ).chunk(6, dim=1)
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+                self.adaLN_modulation(adaln_input).chunk(6, dim=1)
+            )
 
             x = x + gate_msa.unsqueeze(1) * self.attention(
                 modulate(self.attention_norm(x), shift_msa, scale_msa), freqs_cis
@@ -192,9 +199,12 @@ class FinalLayer(nn.Module):
     def __init__(self, hidden_size, patch_size, out_channels):
         super().__init__()
         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, bias=True)
+        self.linear = nn.Linear(
+            hidden_size, patch_size * patch_size * out_channels, bias=True
+        )
         self.adaLN_modulation = nn.Sequential(
-            nn.SiLU(), nn.Linear(min(hidden_size, 1024), 2 * hidden_size, bias=True),
+            nn.SiLU(),
+            nn.Linear(min(hidden_size, 1024), 2 * hidden_size, bias=True),
         )
         # # init zero
         nn.init.constant_(self.linear.weight, 0)
@@ -207,11 +217,58 @@ class FinalLayer(nn.Module):
         return x
 
 
+class DDiT_Llama(nn.Module):
+
+    def __init__(
+        self,
+        N=256,
+        dim=512,
+        n_layers=5,
+        n_heads=16,
+        multiple_of=256,
+        ffn_dim_multiplier=None,
+        norm_eps=1e-5,
+    ):
+        super().__init__()
+        self.N = N
+
+        self.embedder = nn.Embedding(N, dim)
+        self.t_embedder = TimestepEmbedder(min(dim, 1024))
+        self.layers = nn.ModuleList(
+            [
+                TransformerBlock(
+                    layer_id,
+                    dim,
+                    n_heads,
+                    multiple_of,
+                    ffn_dim_multiplier,
+                    norm_eps,
+                )
+                for layer_id in range(n_layers)
+            ]
+        )
+        self.final_layer = FinalLayer(dim, 1, self.N * 2)
+        self.freqs_cis = DiT_Llama.precompute_freqs_cis(dim // n_heads, 4096)
+
+    def forward(self, x, t, cond=None):
+        self.freqs_cis = self.freqs_cis.to(x.device)
+        x_onehot = torch.nn.functional.one_hot(x, self.N).float().to(x.device)
+        x = self.embedder(x)
+        adaln_input = self.t_embedder(t)
+
+        for layer in self.layers:
+            x = layer(x, self.freqs_cis[: x.size(1)], adaln_input=adaln_input)
+
+        x = self.final_layer(x, adaln_input)
+        x, gate = x.chunk(2, dim=-1)
+        return x + x_onehot * (1 + gate).abs()
+
+
 class DiT_Llama(nn.Module):
     def __init__(
         self,
         in_channels=3,
-        N = 8,
+        N=8,
         input_size=32,
         patch_size=2,
         dim=512,
@@ -233,15 +290,15 @@ class DiT_Llama(nn.Module):
         self.patch_size = patch_size
 
         self.init_conv_seq = nn.Sequential(
-            nn.Conv2d(in_channels, dim//2, kernel_size=5, padding=2, stride=1),
+            nn.Conv2d(in_channels, dim // 2, kernel_size=5, padding=2, stride=1),
             nn.SiLU(),
-            nn.GroupNorm(32, dim//2),
-            nn.Conv2d(dim//2, dim//2, kernel_size=5, padding = 2, stride=1),
+            nn.GroupNorm(32, dim // 2),
+            nn.Conv2d(dim // 2, dim // 2, kernel_size=5, padding=2, stride=1),
             nn.SiLU(),
-            nn.GroupNorm(32, dim//2)
+            nn.GroupNorm(32, dim // 2),
         )
 
-        self.x_embedder = nn.Linear(patch_size * patch_size * dim//2, dim, bias=True)
+        self.x_embedder = nn.Linear(patch_size * patch_size * dim // 2, dim, bias=True)
         nn.init.constant_(self.x_embedder.bias, 0)
 
         self.t_embedder = TimestepEmbedder(min(dim, 1024))
@@ -250,7 +307,12 @@ class DiT_Llama(nn.Module):
         self.layers = nn.ModuleList(
             [
                 TransformerBlock(
-                    layer_id, dim, n_heads, multiple_of, ffn_dim_multiplier, norm_eps,
+                    layer_id,
+                    dim,
+                    n_heads,
+                    multiple_of,
+                    ffn_dim_multiplier,
+                    norm_eps,
                 )
                 for layer_id in range(n_layers)
             ]
@@ -270,7 +332,14 @@ class DiT_Llama(nn.Module):
 
     def patchify(self, x):
         B, C, H, W = x.size()
-        x = x.view(B, C, H // self.patch_size, self.patch_size, W // self.patch_size, self.patch_size)
+        x = x.view(
+            B,
+            C,
+            H // self.patch_size,
+            self.patch_size,
+            W // self.patch_size,
+            self.patch_size,
+        )
         x = x.permute(0, 2, 4, 1, 3, 5).flatten(-3).flatten(1, 2)
         return x
 
@@ -293,12 +362,13 @@ class DiT_Llama(nn.Module):
 
         x = self.final_layer(x, adaln_input)
         x = self.unpatchify(x)  # (N, out_channels, H, W)
-        
-        x, gate = (x.reshape(x.shape[0], -1, self.N * 2, *x.shape[2:])
+
+        x, gate = (
+            x.reshape(x.shape[0], -1, self.N * 2, *x.shape[2:])
             .transpose(2, -1)
             .contiguous()
         ).chunk(2, dim=-1)
-     
+
         return x + x_onehot * (1 + gate).abs()
 
         # x = (x.reshape(x.shape[0], -1, self.N, *x.shape[2:])
@@ -311,7 +381,7 @@ class DiT_Llama(nn.Module):
         half = x[: len(x) // 2]
         combined = torch.cat([half, half], dim=0)
         model_out = self.forward(combined, t, y)
-        eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels:]
+        eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels :]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
@@ -332,7 +402,6 @@ def DiT_Llama_600M_patch2(**kwargs):
 
 def DiT_Llama_3B_patch2(**kwargs):
     return DiT_Llama(patch_size=2, dim=3072, n_layers=32, n_heads=32, **kwargs)
-
 
 
 if __name__ == "__main__":

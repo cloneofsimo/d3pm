@@ -19,14 +19,16 @@ if __name__ == "__main__":
     wandb.init(project="d3pm_cifar10")
 
     N = 8  # number of classes for discretized state per pixel
-    d3pm = D3PM(DiT_Llama(3, N, dim = 1024), 1000, num_classes=N, hybrid_loss_coeff=0.0).cuda()
+    d3pm = D3PM(
+        DiT_Llama(3, N, dim=1024), 1000, num_classes=N, hybrid_loss_coeff=0.0
+    ).cuda()
     print(f"Total Param Count: {sum([p.numel() for p in d3pm.x0_model.parameters()])}")
     dataset = CIFAR10(
         "./data",
         train=True,
         download=True,
         transform=transforms.Compose(
-            [   
+            [
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
             ]
@@ -91,8 +93,8 @@ if __name__ == "__main__":
                     # image sequences to gif
                     gif = []
                     for image in images:
-                        x_from_dataloader = x_cat[:16].cpu() / (N-1)
-                        this_image = image.float().cpu() / (N-1)
+                        x_from_dataloader = x_cat[:16].cpu() / (N - 1)
+                        this_image = image.float().cpu() / (N - 1)
                         all_images = torch.cat([x_from_dataloader, this_image], dim=0)
                         x_as_image = make_grid(all_images, nrow=4)
                         img = x_as_image.permute(1, 2, 0).cpu().numpy()

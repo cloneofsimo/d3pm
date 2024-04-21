@@ -148,9 +148,11 @@ class D3PM(nn.Module):
 
         steps = torch.arange(n_T + 1, dtype=torch.float64) / n_T
         alpha_bar = torch.cos((steps + 0.008) / 1.008 * torch.pi / 2)
-        self.beta_t = torch.minimum(1 - alpha_bar[1:] / alpha_bar[:-1], torch.ones_like(alpha_bar[1:]) * 0.999)
-        
-        #self.beta_t = [1 / (self.n_T - t + 1) for t in range(1, self.n_T + 1)]
+        self.beta_t = torch.minimum(
+            1 - alpha_bar[1:] / alpha_bar[:-1], torch.ones_like(alpha_bar[1:]) * 0.999
+        )
+
+        # self.beta_t = [1 / (self.n_T - t + 1) for t in range(1, self.n_T + 1)]
         self.eps = 1e-6
         self.num_classses = num_classes
         q_onestep_mats = []
@@ -259,7 +261,7 @@ class D3PM(nn.Module):
 
         return predicted_x0_logits
 
-    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, cond: torch.Tensor = None) -> torch.Tensor:
         """
         Makes forward diffusion x_t from x_0, and tries to guess x_0 value from x_t using x0_model.
         x is one-hot of dim (bs, ...), with int values of 0 to num_classes - 1
@@ -287,7 +289,7 @@ class D3PM(nn.Module):
 
         ce_loss = torch.nn.CrossEntropyLoss()(predicted_x0_logits, x)
 
-        return self.hybrid_loss_coeff * vb_loss +  ce_loss, {
+        return self.hybrid_loss_coeff * vb_loss + ce_loss, {
             "vb_loss": vb_loss.detach().item(),
             "ce_loss": ce_loss.detach().item(),
         }
@@ -300,14 +302,14 @@ class D3PM(nn.Module):
         noise = torch.clip(noise, self.eps, 1.0)
 
         not_first_step = (t != 1).float().reshape((x.shape[0], *[1] * (x.dim())))
-    
+
         gumbel_noise = -torch.log(-torch.log(noise))
         sample = torch.argmax(
             pred_q_posterior_logits + gumbel_noise * not_first_step, dim=-1
         )
         return sample
 
-    def sample(self, x, cond):
+    def sample(self, x, cond=None):
         for t in reversed(range(1, self.n_T)):
             t = torch.tensor([t] * x.shape[0], device=x.device)
             x = self.p_sample(
@@ -316,7 +318,7 @@ class D3PM(nn.Module):
 
         return x
 
-    def sample_with_image_sequence(self, x, cond, stride=10):
+    def sample_with_image_sequence(self, x, cond=None, stride=10):
         steps = 0
         images = []
         for t in reversed(range(1, self.n_T)):
@@ -333,6 +335,7 @@ class D3PM(nn.Module):
             images.append(x)
 
         return images
+
 
 if __name__ == "__main__":
 
@@ -401,7 +404,7 @@ if __name__ == "__main__":
                     # image sequences to gif
                     gif = []
                     for image in images:
-                        x_as_image = make_grid(image.float() / (N-1), nrow=2)
+                        x_as_image = make_grid(image.float() / (N - 1), nrow=2)
                         img = x_as_image.permute(1, 2, 0).cpu().numpy()
                         img = (img * 255).astype(np.uint8)
                         gif.append(Image.fromarray(img))
