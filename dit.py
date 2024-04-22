@@ -36,7 +36,9 @@ class TimestepEmbedder(nn.Module):
         return embedding
 
     def forward(self, t):
-        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
+        t_freq = self.timestep_embedding(t, self.frequency_embedding_size).to(
+            dtype=next(self.parameters()).dtype
+        )
         t_emb = self.mlp(t_freq)
         return t_emb
 
@@ -259,7 +261,9 @@ class DDiT_Llama(nn.Module):
 
     def forward(self, x, t, cond=None):
         self.freqs_cis = self.freqs_cis.to(x.device)
-        x_onehot = torch.nn.functional.one_hot(x, self.N).float().to(x.device)
+        x_onehot = torch.nn.functional.one_hot(x, self.N).to(
+            x.device, dtype=next(self.parameters()).dtype
+        )
         x = self.embedder(x)
         adaln_input = self.t_embedder(t)
 

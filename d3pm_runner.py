@@ -222,7 +222,8 @@ class D3PM(nn.Module):
         fact1 = self._at(self.q_one_step_transposed, t, x_t)
 
         softmaxed = torch.softmax(x_0_logits, dim=-1)  # bs, ..., num_classes
-        qmats2 = self.q_mats[t - 2]  # bs, num_classes, num_classes
+        qmats2 = self.q_mats[t - 2].to(dtype=softmaxed.dtype)
+        # bs, num_classes, num_classes
         fact2 = torch.einsum("b...c,bcd->b...d", softmaxed, qmats2)
 
         out = torch.log(fact1 + self.eps) + torch.log(fact2 + self.eps)
@@ -257,6 +258,7 @@ class D3PM(nn.Module):
         # so they are in form of x_0's logit might be independent to model choice.
         # for example, you can convert 2 * N channel output of model output to logit via get_logits_from_logistic_pars
         # they introduce at appendix A.8.
+
         predicted_x0_logits = self.x0_model(x_0, t, cond)
 
         return predicted_x0_logits
