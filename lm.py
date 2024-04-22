@@ -5,7 +5,8 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from datasets import load_dataset
-
+from transformers import get_scheduler
+import math
 
 import wandb
 
@@ -21,9 +22,7 @@ class WikiTextDataset(Dataset):
         else:
             vernum = 103
         self.vernum = vernum
-        self.dataset = load_dataset(
-            "wikitext", f"wikitext-{vernum}-raw-v1", split=type_path
-        )
+        self.dataset = load_dataset("wikimedia/wikipedia", "20231101.en", split="train")
         self.tokenizer = tokenizer
         self.max_length = max_length
 
@@ -61,22 +60,31 @@ if __name__ == "__main__":
     wandb.init(project="d3pm_wiki")
 
     N = 256
+    max_length = 256
+    num_train_epochs = 5
 
     d3pm = D3PM(
-        DDiT_Llama(N, dim=1024), 1000, num_classes=N, hybrid_loss_coeff=0.0
+        DDiT_Llama(N, dim=512, n_layers=6), 1000, num_classes=N, hybrid_loss_coeff=0.0
     ).cuda()
 
     print(f"Total Param Count: {sum([p.numel() for p in d3pm.x0_model.parameters()])}")
-    dataset = WikiTextDataset(max_length=128, debug=True)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=16)
-    optim = torch.optim.AdamW(d3pm.x0_model.parameters(), lr=2e-5)
+    dataset = WikiTextDataset(max_length=max_length, debug=False)
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=True, num_workers=8)
+    optim = torch.optim.AdamW(d3pm.x0_model.parameters(), lr=2e-4)
+
+    lr_scheduler = get_scheduler(
+        name="linear",
+        optimizer=optim,
+        num_warmup_steps=100,
+        num_training_steps=num_train_epochs * math.ceil(len(dataloader)),
+    )
+
     d3pm.train()
 
-    n_epoch = 4000
     device = "cuda"
 
     global_step = 0
-    for i in range(n_epoch):
+    for i in range(num_train_epochs):
 
         pbar = tqdm(dataloader)
         loss_ema = None
@@ -112,6 +120,7 @@ if __name__ == "__main__":
                 f"loss: {loss_ema:.4f}, norm: {norm:.4f}, param_norm: {param_norm:.4f}, vb_loss: {info['vb_loss']:.4f}, ce_loss: {info['ce_loss']:.4f}"
             )
             optim.step()
+            lr_scheduler.step()
             global_step += 1
 
             if global_step % 600 == 1:
@@ -119,29 +128,41 @@ if __name__ == "__main__":
 
                 with torch.no_grad():
 
-                    init_noise = torch.randint(0, N, (16, 128)).cuda()
+                    init_noise = torch.randint(0, N, (16, max_length)).cuda()
 
                     outputs = d3pm.sample_with_image_sequence(
                         init_noise, None, stride=40
                     )
-
-                    last_tokens = outputs[-1][0].cpu().tolist()
-                    print(last_tokens)
+                    gen_outputs = []
+                    total = 0
                     # back to sentence, byte to utf-8
-                    try:
-                        last_text = b"".join([bytes([i]) for i in last_tokens]).decode(
-                            "utf-8"
+                    for _i in range(16):
+                        sent = outputs[-1][_i].cpu().tolist()
+                        correctly_parsed = True
+                        try:
+                            sent = b"".join([bytes([i]) for i in sent]).decode("utf-8")
+                        except:
+                            # if there is error, just unicodec
+                            correctly_parsed = False
+                            sent = "".join([chr(i) for i in sent])
+                        sent = (
+                            f"[{_i}] Sample Correctly parsed: "
+                            + str(correctly_parsed)
+                            + "\n"
+                            + sent
                         )
-                    except:
-                        # if there is error, just unicode
-                        last_text = "".join([chr(i) for i in last_tokens])
+                        total += 1 if correctly_parsed else 0
 
-                    print(last_text)
+                        gen_outputs.append(sent)
 
+                    print(sent)
+                    # make a nice html to show the generated outputs
+                    html_formatted = "<br>".join(gen_outputs)
                     # log text
                     wandb.log(
                         {
-                            "generated_text": wandb.Html(last_text),
+                            "generated_text": wandb.Html(html_formatted),
+                            "correctly_parsed": total,
                         }
                     )
 

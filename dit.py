@@ -228,9 +228,15 @@ class DDiT_Llama(nn.Module):
         multiple_of=256,
         ffn_dim_multiplier=None,
         norm_eps=1e-5,
+        learn_gating=False,
     ):
         super().__init__()
         self.N = N
+        self.learn_gating = learn_gating
+        if self.learn_gating:
+            self.out_channel = N * 2
+        else:
+            self.out_channel = N
 
         self.embedder = nn.Embedding(N, dim)
         self.t_embedder = TimestepEmbedder(min(dim, 1024))
@@ -247,7 +253,7 @@ class DDiT_Llama(nn.Module):
                 for layer_id in range(n_layers)
             ]
         )
-        self.final_layer = FinalLayer(dim, 1, self.N * 2)
+        self.final_layer = FinalLayer(dim, 1, self.out_channel)
         self.freqs_cis = DiT_Llama.precompute_freqs_cis(dim // n_heads, 4096)
 
     def forward(self, x, t, cond=None):
@@ -260,8 +266,11 @@ class DDiT_Llama(nn.Module):
             x = layer(x, self.freqs_cis[: x.size(1)], adaln_input=adaln_input)
 
         x = self.final_layer(x, adaln_input)
-        x, gate = x.chunk(2, dim=-1)
-        return x + x_onehot * (1 + gate).abs()
+        if self.learn_gating:
+            x, gate = x.chunk(2, dim=-1)
+            return x + x_onehot * (1 + gate).abs()
+        else:
+            return x + x_onehot
 
 
 class DiT_Llama(nn.Module):
