@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import torch.nn as nn
 from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -9,8 +8,6 @@ from torchvision.utils import make_grid
 from tqdm import tqdm
 
 import wandb
-
-
 from d3pm_runner import D3PM
 from dit import DiT_Llama
 
