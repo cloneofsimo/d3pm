@@ -172,7 +172,7 @@ def main(
     with deepspeed.zero.Init(enabled=(zero_stage == 3)):
 
         d3pm = D3PM(
-            DDiT_Llama(N, dim=512, n_layers=6),
+            DDiT_Llama(N, dim=768, n_layers=8),
             1000,
             num_classes=N,
             hybrid_loss_coeff=0.0,
@@ -253,7 +253,8 @@ def main(
             norm = model_engine.get_global_grad_norm()
 
             if global_step % 10 == 0:
-                wandb.log({"train_loss": loss, "train_grad_norm": norm})
+                if global_rank == 0:
+                    wandb.log({"train_loss": loss, "train_grad_norm": norm})
 
             pbar.set_description(
                 f"norm: {norm}, vb_loss: {info['vb_loss']:.4f}, ce_loss: {info['ce_loss']:.4f}"
@@ -298,12 +299,13 @@ def main(
                     # make a nice html to show the generated outputs
                     html_formatted = "<br>".join(gen_outputs)
                     # log text
-                    wandb.log(
-                        {
-                            "generated_text": wandb.Html(html_formatted),
-                            "correctly_parsed": total,
-                        }
-                    )
+                    if global_rank == 0:
+                        wandb.log(
+                            {
+                                "generated_text": wandb.Html(html_formatted),
+                                "correctly_parsed": total,
+                            }
+                        )
                     if global_step % 3000 == 1:
                         save_zero_three_model(
                             model_engine, global_rank, "./ckpt", zero_stage=zero_stage
